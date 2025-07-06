@@ -8,7 +8,7 @@ from transformers import GenerationConfig, LlamaForCausalLM
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from models.vector_encoder import VectorEncoder, VectorEncoderConfig
-from utils.vector_utils import VectorObservation, VectorObservationConfig
+from utils.vector_utils.randomize_utils import VectorObservation, VectorObservationConfig
 
 
 class LlamaForCausalLMVectorInput(LlamaForCausalLM):
@@ -153,6 +153,7 @@ class LlamaForCausalLMVectorInput(LlamaForCausalLM):
 class VectorLMWithLoRA(PeftModelForCausalLM):
     def __init__(self, model, peft_config, num_vector_tokens=64):
         super().__init__(model, peft_config)
+        self.target_dtype = model.dtype
         self.num_vector_tokens = num_vector_tokens
         self.vector_encoder = VectorEncoder(
             VectorEncoderConfig(), VectorObservationConfig(), num_vector_tokens
@@ -160,8 +161,13 @@ class VectorLMWithLoRA(PeftModelForCausalLM):
         self.llm_proj = torch.nn.Linear(
             self.vector_encoder.out_features, self.config.hidden_size
         )
+        self.vector_encoder.to(model.device)
+        self.llm_proj.to(model.device)
+        if model.dtype == torch.float16: # Check base model's dtype
+            self.vector_encoder.half()
+            self.llm_proj.half()
         self.to(model.device)
-        self.modules_to_save = ["vector_encoder", "llm_proj"]
+        # self.modules_to_save = ["vector_encoder", "llm_proj"]
         self.generation_config = GenerationConfig(
             temperature=0.1,
             top_p=0.75,
@@ -169,7 +175,7 @@ class VectorLMWithLoRA(PeftModelForCausalLM):
             num_beams=1,
             use_cache=False,
             do_sample=True,
-            max_length=384,
+            max_new_tokens=64,
             pad_token_id=0,
             bos_token_id=1,
             eos_token_id=2,
@@ -186,6 +192,11 @@ class VectorLMWithLoRA(PeftModelForCausalLM):
         pedestrian_descriptors,
         ego_vehicle_descriptor,
     ):
+        route_descriptors = route_descriptors.to(dtype=self.target_dtype, device=self.device)
+        vehicle_descriptors = vehicle_descriptors.to(dtype=self.target_dtype, device=self.device)
+        pedestrian_descriptors = pedestrian_descriptors.to(dtype=self.target_dtype, device=self.device)
+        ego_vehicle_descriptor = ego_vehicle_descriptor.to(dtype=self.target_dtype, device=self.device)
+
         # Create the vector observation
         vector_obs = VectorObservation(
             route_descriptors=route_descriptors,
@@ -200,6 +211,10 @@ class VectorLMWithLoRA(PeftModelForCausalLM):
 
         # Generate token embeddings
         inputs_embeds = self.model.model.embed_tokens(input_ids)
+        
+        if self.dtype == torch.float16: # self.dtype from PeftModel
+            inputs_vector = inputs_vector.half()
+            inputs_embeds = inputs_embeds.half() # Should already be if base model is FP16
 
         # Concatenate the vector embeddings with the token embeddings
         new_inputs_embeds, new_attention_mask, new_labels = ingest_vectors(
@@ -275,6 +290,7 @@ class VectorLMWithLoRA(PeftModelForCausalLM):
             ] = (
                 self.generation_config
             )  # Override the generation config to make the padding tokens correct
+        torch.cuda.empty_cache()
         outputs = self.base_model.generate(**kwargs)
         return outputs
 
