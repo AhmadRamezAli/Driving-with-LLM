@@ -1,0 +1,18 @@
+vqa_train_10k.pkl
+vqa_test_1k.pkl
+__pycache__/
+*.pyc
+*.pptx
+*.json
+*.log
+wandb/
+results/
+data/
+*.pt
+*.h5
+new_approach
+stage1deepseek
+stage2_finetune
+last
+# eslint cache
+.eslintcache
