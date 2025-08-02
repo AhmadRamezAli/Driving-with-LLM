@@ -1,0 +1,12 @@
+data/vqa_train_10k.pkl
+data/vqa_test_1k.pkl
+__pycache__/
+*.pyc
+*.pptx
+*.json
+*.log
+wandb/
+results/
+data/
+*.pt
+*.h5
